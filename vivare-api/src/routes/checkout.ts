@@ -1,6 +1,12 @@
 import { Router } from 'express';
 import { asyncHandler, Errors } from '../middleware/error-handler.js';
 import { idempotencyMiddleware } from '../middleware/idempotency.js';
+import { validate } from '../middleware/validate.js';
+import {
+    initializeCheckoutSchema,
+    updateGuestSchema,
+    finalizeCheckoutSchema
+} from '../schemas/checkout-schema.js';
 import { CheckoutService } from '../services/checkout-service.js';
 import { CheckoutState } from '../models/checkout.js';
 
@@ -16,12 +22,9 @@ const checkoutService = new CheckoutService();
  */
 router.post('/initialize',
     idempotencyMiddleware({ required: false }),
+    validate(initializeCheckoutSchema),
     asyncHandler(async (req, res) => {
         const { listingId, checkIn, checkOut, guests, couponCode, metadata } = req.body;
-
-        if (!listingId || !checkIn || !checkOut || !guests) {
-            throw Errors.badRequest('Missing required fields: listingId, checkIn, checkOut, guests');
-        }
 
         const checkout = await checkoutService.initializeCheckout({
             listingId,
@@ -61,18 +64,16 @@ router.get('/:checkoutId', asyncHandler(async (req, res) => {
  * PATCH /checkout/:checkoutId/guest
  * Update guest information (step 2 of wizard)
  */
-router.patch('/:checkoutId/guest', asyncHandler(async (req, res) => {
-    const { checkoutId } = req.params;
-    const { guest } = req.body;
+router.patch('/:checkoutId/guest',
+    validate(updateGuestSchema),
+    asyncHandler(async (req, res) => {
+        const { checkoutId } = req.params;
+        const { guest } = req.body;
 
-    if (!guest?.firstName || !guest?.lastName || !guest?.email || !guest?.phone) {
-        throw Errors.badRequest('Missing required guest fields: firstName, lastName, email, phone');
-    }
+        const checkout = await checkoutService.updateGuestInfo(checkoutId, guest);
 
-    const checkout = await checkoutService.updateGuestInfo(checkoutId, guest);
-
-    res.json(checkout);
-}));
+        res.json(checkout);
+    }));
 
 /**
  * POST /checkout/:checkoutId/hold
@@ -128,6 +129,7 @@ router.post('/:checkoutId/payment-intent',
  * (Implements the "finalize" recommendation for better UX)
  */
 router.post('/:checkoutId/finalize',
+    validate(finalizeCheckoutSchema),
     asyncHandler(async (req, res) => {
         const { checkoutId } = req.params;
         const { maxWaitMs = 10000 } = req.body;

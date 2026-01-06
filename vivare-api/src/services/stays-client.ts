@@ -24,8 +24,8 @@ import {
  * - Separated into cacheable (public read) and transactional (never cached) methods
  */
 
-const DEFAULT_TIMEOUT_MS = 30000;
-const MAX_RETRIES = 3;
+const DEFAULT_TIMEOUT_MS = 5000;
+const MAX_RETRIES = 2;
 const RETRY_DELAY_MS = 1000;
 
 export class StaysApiError extends Error {
@@ -61,7 +61,7 @@ export class StaysClient {
     }
 
     // ============================================
-    // PUBLIC READ APIs (cacheable)
+    // PUBLIC READ APIs (cacheable) - Fast 8s timeout
     // ============================================
 
     /**
@@ -79,14 +79,14 @@ export class StaysClient {
             }
         });
 
-        return this.get<StaysSearchResponse>(`/listings?${params.toString()}`);
+        return this.get<StaysSearchResponse>(`/listings?${params.toString()}`, { timeoutMs: 8000, retry: true });
     }
 
     /**
      * Get listing detail by ID
      */
     async getListingDetail(listingId: string): Promise<StaysListingDetail> {
-        return this.get<StaysListingDetail>(`/listings/${listingId}`);
+        return this.get<StaysListingDetail>(`/listings/${listingId}`, { timeoutMs: 8000, retry: true });
     }
 
     /**
@@ -98,32 +98,32 @@ export class StaysClient {
         endDate: string,
     ): Promise<StaysCalendarResponse> {
         const params = new URLSearchParams({ startDate, endDate });
-        return this.get<StaysCalendarResponse>(`/listings/${listingId}/calendar?${params.toString()}`);
+        return this.get<StaysCalendarResponse>(`/listings/${listingId}/calendar?${params.toString()}`, { timeoutMs: 8000, retry: true });
     }
 
     /**
      * Calculate price for a booking (cached)
      */
     async calculatePrice(request: StaysPriceRequest): Promise<StaysPriceResponse> {
-        return this.post<StaysPriceResponse>('/booking/calculate-price', request);
+        return this.post<StaysPriceResponse>('/booking/calculate-price', request, { timeoutMs: 8000, retry: true });
     }
 
     /**
      * Get all groups (collections)
      */
     async getGroups(): Promise<StaysGroup[]> {
-        return this.get<StaysGroup[]>('/groups');
+        return this.get<StaysGroup[]>('/groups', { timeoutMs: 5000, retry: true });
     }
 
     /**
      * Get group by ID or slug
      */
     async getGroup(idOrSlug: string): Promise<StaysGroup> {
-        return this.get<StaysGroup>(`/groups/${idOrSlug}`);
+        return this.get<StaysGroup>(`/groups/${idOrSlug}`, { timeoutMs: 5000, retry: true });
     }
 
     // ============================================
-    // TRANSACTIONAL APIs (never cached)
+    // TRANSACTIONAL APIs (never cached) - Reliable 30s timeout
     // ============================================
 
     /**
@@ -139,7 +139,7 @@ export class StaysClient {
             checkOut: data.checkOut,
         });
 
-        return this.post<StaysReservation>('/reservations', data, { retry: false });
+        return this.post<StaysReservation>('/reservations', data, { timeoutMs: 30000, retry: false });
     }
 
     /**
@@ -154,7 +154,7 @@ export class StaysClient {
             updates,
         });
 
-        return this.patch<StaysReservation>(`/reservations/${reservationId}`, updates, { retry: false });
+        return this.patch<StaysReservation>(`/reservations/${reservationId}`, updates, { timeoutMs: 30000, retry: false });
     }
 
     /**
@@ -166,7 +166,7 @@ export class StaysClient {
         await this.patch<StaysReservation>(
             `/reservations/${reservationId}`,
             { type: 'canceled' },
-            { retry: false },
+            { timeoutMs: 20000, retry: false },
         );
     }
 
@@ -174,7 +174,7 @@ export class StaysClient {
      * Get reservation by ID
      */
     async getReservation(reservationId: string): Promise<StaysReservation> {
-        return this.get<StaysReservation>(`/reservations/${reservationId}`);
+        return this.get<StaysReservation>(`/reservations/${reservationId}`, { timeoutMs: 15000, retry: true });
     }
 
     /**
@@ -194,7 +194,7 @@ export class StaysClient {
         return this.post<StaysPayment>(
             `/reservations/${reservationId}/payments`,
             payment,
-            { retry: false },
+            { timeoutMs: 30000, retry: false },
         );
     }
 
@@ -202,24 +202,24 @@ export class StaysClient {
     // HTTP Methods with retry logic
     // ============================================
 
-    private async get<T>(path: string, options: { retry?: boolean } = {}): Promise<T> {
-        return this.request<T>('GET', path, undefined, options.retry ?? true);
+    private async get<T>(path: string, options: { retry?: boolean, timeoutMs?: number } = {}): Promise<T> {
+        return this.request<T>('GET', path, undefined, options.retry ?? true, options.timeoutMs);
     }
 
     private async post<T>(
         path: string,
         body: unknown,
-        options: { retry?: boolean } = {},
+        options: { retry?: boolean, timeoutMs?: number } = {},
     ): Promise<T> {
-        return this.request<T>('POST', path, body, options.retry ?? true);
+        return this.request<T>('POST', path, body, options.retry ?? true, options.timeoutMs);
     }
 
     private async patch<T>(
         path: string,
         body: unknown,
-        options: { retry?: boolean } = {},
+        options: { retry?: boolean, timeoutMs?: number } = {},
     ): Promise<T> {
-        return this.request<T>('PATCH', path, body, options.retry ?? false);
+        return this.request<T>('PATCH', path, body, options.retry ?? false, options.timeoutMs);
     }
 
     private async request<T>(
@@ -227,14 +227,16 @@ export class StaysClient {
         path: string,
         body?: unknown,
         retry = true,
+        customTimeoutMs?: number
     ): Promise<T> {
         const url = `${this.baseUrl}${path}`;
+        const timeoutMs = customTimeoutMs ?? this.timeoutMs;
         let lastError: Error | null = null;
         const maxAttempts = retry ? MAX_RETRIES : 1;
 
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
+            const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
             try {
                 const startTime = Date.now();
@@ -271,6 +273,7 @@ export class StaysClient {
                         errorBody.message || `Stays API error: ${response.status}`,
                         response.status,
                         errorBody.code,
+                        errorBody.details,
                     );
                 }
 
