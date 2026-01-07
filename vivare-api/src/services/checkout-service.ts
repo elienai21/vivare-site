@@ -31,7 +31,7 @@ const QUOTE_TTL_MINUTES = parseInt(process.env.CHECKOUT_QUOTE_TTL_MINUTES || '30
 
 // Stripe client
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-    apiVersion: '2025-12-15.clover',
+    apiVersion: '2025-02-24.acacia',
 });
 
 export interface InitCheckoutParams {

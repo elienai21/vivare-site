@@ -42,21 +42,21 @@ export class StaysApiError extends Error {
 
 interface StaysClientConfig {
     baseUrl: string;
-    apiKey: string;
     clientId: string;
+    clientSecret: string;
     timeoutMs?: number;
 }
 
 export class StaysClient {
     private readonly baseUrl: string;
-    private readonly apiKey: string;
     private readonly clientId: string;
+    private readonly clientSecret: string;
     private readonly timeoutMs: number;
 
     constructor(config: StaysClientConfig) {
         this.baseUrl = config.baseUrl.replace(/\/$/, ''); // Remove trailing slash
-        this.apiKey = config.apiKey;
         this.clientId = config.clientId;
+        this.clientSecret = config.clientSecret;
         this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     }
 
@@ -234,6 +234,9 @@ export class StaysClient {
         let lastError: Error | null = null;
         const maxAttempts = retry ? MAX_RETRIES : 1;
 
+        // Generate Basic Auth token
+        const authHeader = `Basic ${Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64')}`;
+
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -245,8 +248,7 @@ export class StaysClient {
                     method,
                     headers: {
                         'Content-Type': 'application/json',
-                        'X-API-Key': this.apiKey,
-                        'X-Client-ID': this.clientId,
+                        'Authorization': authHeader,
                     },
                     body: body ? JSON.stringify(body) : undefined,
                     signal: controller.signal,
@@ -330,14 +332,14 @@ let staysClientInstance: StaysClient | null = null;
 export function getStaysClient(): StaysClient {
     if (!staysClientInstance) {
         const baseUrl = process.env.STAYS_API_URL;
-        const apiKey = process.env.STAYS_API_KEY;
         const clientId = process.env.STAYS_CLIENT_ID;
+        const clientSecret = process.env.STAYS_CLIENT_SECRET;
 
-        if (!baseUrl || !apiKey || !clientId) {
-            throw new Error('Missing required Stays API configuration');
+        if (!baseUrl || !clientId || !clientSecret) {
+            throw new Error('Missing required Stays API configuration (STAYS_API_URL, STAYS_CLIENT_ID, or STAYS_CLIENT_SECRET)');
         }
 
-        staysClientInstance = new StaysClient({ baseUrl, apiKey, clientId });
+        staysClientInstance = new StaysClient({ baseUrl, clientId, clientSecret });
     }
     return staysClientInstance;
 }
